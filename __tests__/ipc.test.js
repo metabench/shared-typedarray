@@ -43,7 +43,7 @@ describe('Shared TypedArray - IPC Tests', () => {
       return;
     }
 
-    const key = 12345700;
+    const key = 12340000 + Date.now() % 1000000;
     const buf = shm.create(10, 'Buffer', key);
     buf[0] = 100;
 
