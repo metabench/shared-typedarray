@@ -48,7 +48,8 @@
     "build:debug": "node-gyp configure --debug && node-gyp rebuild --debug",
     "install": "npm run build",
     "test": "jest",
-    "test:example": "node test/example.js"
+    "test:example": "node test/example.js",
+    "example:simple": "node examples/simple.js"
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",
