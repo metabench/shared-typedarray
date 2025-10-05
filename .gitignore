@@ -1,0 +1,13 @@
+build/
+node_modules/
+npm-debug.log
+package-lock.json
+.cache
+compile_commands.json
+coverage/
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
