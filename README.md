@@ -8,13 +8,13 @@ Fork of [shm-typed-array](https://github.com/ukrbublik/shm-typed-array) with imp
 ## Overview
 
 Cross-platform IPC shared memory for Node.js. Use as `Buffer` or `TypedArray`.
-Supports System V and POSIX shared memory on Unix-like systems (Linux, macOS, FreeBSD).
+Supports System V and POSIX shared memory on Unix-like systems, and Windows File Mapping on Windows.
 
-**Current Platform Support:**
+**Platform Support:**
 - ✅ Linux - Full support (System V + POSIX)
 - ✅ macOS - Full support (System V + POSIX, with limitations)
 - ✅ FreeBSD - Full support (System V + POSIX)
-- ⚠️ Windows - Not yet supported (work in progress)
+- ✅ Windows - Full support (File Mapping API)
 
 ## Install
 
@@ -22,25 +22,35 @@ Supports System V and POSIX shared memory on Unix-like systems (Linux, macOS, Fr
 npm install shared-typedarray
 ```
 
-**Note:** Windows is currently not supported. The library will install but not function on Windows systems. We are actively working on Windows support using CreateFileMapping/MapViewOfFile APIs.
+The library now supports all major platforms including Windows. On Windows, it uses the CreateFileMapping/MapViewOfFile APIs to provide shared memory functionality compatible with the Unix API.
 
-## System V vs POSIX
+## System V vs POSIX vs Windows
 
-The library supports two types of shared memory:
+The library supports different types of shared memory depending on the platform:
 
-### System V (Classic)
+### Unix/Linux Platforms
+
+#### System V (Classic)
 - Uses integer keys
 - Stored internally in the kernel
 - Automatically cleaned up when no processes are attached
 - Example: `shm.create(100, 'Buffer', 1234)`
 
-### POSIX (Modern)
+#### POSIX (Modern)
 - Uses string names (starting with `/`)
 - Uses filesystem interface
 - Must be explicitly destroyed with `shm.destroy(name)`
 - Example: `shm.create(100, 'Buffer', '/myshm')`
 
-**Note:** POSIX support may be limited on macOS. System V is generally more portable.
+**Note:** POSIX support may be limited on macOS. System V is generally more portable on Unix systems.
+
+### Windows Platform
+
+On Windows, both integer keys and string names are supported through the Windows File Mapping API:
+- Integer keys are converted to named objects (e.g., key `12345` becomes `Local\shmkey_12345`)
+- String names are also converted to named objects (e.g., `/myshm` becomes `Local\shm_myshm`)
+- All Windows shared memory must be explicitly destroyed with `shm.destroy()` or `shm.detachAll()`
+- Example: `shm.create(100, 'Buffer', 12345)` or `shm.create(100, 'Buffer', '/myshm')`
 
 ## API
 
@@ -149,7 +159,9 @@ cleanup(() => {
 });
 ```
 
-**Important:** POSIX shared memory objects are NOT automatically destroyed. Always call `shm.destroy(name)` when done.
+**Important Notes:**
+- **POSIX** (Unix/Linux): Shared memory objects are NOT automatically destroyed. Always call `shm.destroy(name)` when done.
+- **Windows**: All shared memory mappings are automatically closed when no more handles exist, but it's still recommended to call `shm.destroy()` or `shm.detachAll()` for explicit cleanup.
 
 ## Usage Example
 

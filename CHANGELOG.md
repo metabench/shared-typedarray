@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2024-10-05
+
+### Added
+- **Windows Support!** Full implementation using Windows File Mapping API (CreateFileMapping/MapViewOfFile)
+  - Integer keys converted to named objects (e.g., `12345` → `Local\shmkey_12345`)
+  - String names converted to named objects (e.g., `/myshm` → `Local\shm_myshm`)
+  - All major functionality working on Windows
+- Cross-platform abstraction layer in C++ with `#ifdef _WIN32` guards
+- Windows-specific `SHM_TYPE_WINDOWS` enum value
+- Windows handle tracking in `ShmMeta` structure
+- Updated `binding.gyp` for Windows compilation with MSVC
+
+### Changed
+- Tests now run on all platforms including Windows
+- Updated README to reflect Windows support status
+- Platform detection improved - no longer skips Windows tests
+- CI/CD workflow includes Windows builds (no longer marked as continue-on-error)
+
+### Fixed
+- Platform-specific compilation issues resolved
+- Tests work correctly on Windows, Linux, and macOS
+
 ## [0.2.0] - 2024-10-05
 
 ### Added

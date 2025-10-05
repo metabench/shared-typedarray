@@ -10,7 +10,14 @@
 			"src/node_shm.cc"
 		],
 		"conditions": [
-			["OS!='mac'", {
+			["OS=='win'", {
+				"msvs_settings": {
+					"VCCLCompilerTool": {
+						"ExceptionHandling": 1
+					}
+				}
+			}],
+			["OS!='win' and OS!='mac'", {
 				"libraries": [
 					"-lrt"
 				]

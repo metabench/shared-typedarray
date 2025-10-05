@@ -161,6 +161,9 @@ namespace node_shm {
 		SHM_DELETED = -1,
 		SHM_TYPE_SYSTEMV = 0,
 		SHM_TYPE_POSIX = 1,
+#ifdef _WIN32
+		SHM_TYPE_WINDOWS = 2,
+#endif
 	};
 
 	struct ShmMeta {
@@ -170,6 +173,9 @@ namespace node_shm {
 		size_t memSize;
 		std::string name;
 		bool isOwner;
+#ifdef _WIN32
+		HANDLE hMapFile;  // Windows file mapping handle
+#endif
 	};
 
 	#define NOT_FOUND_IND ULONG_MAX
@@ -239,14 +245,20 @@ namespace node_shm {
 		return false;
 	}
 
-	// Detach System V segment or POSIX object
+	// Detach System V segment or POSIX object or Windows object
 	// Returns 0 if destroyed, > 0 if detached, -1 if not exists
 	static int detachShmSegmentOrObject(ShmMeta& meta, bool force, bool onExit) {
+#ifdef _WIN32
+		if (meta.type == SHM_TYPE_WINDOWS) {
+			return detachWindowsShmObject(meta, force, onExit);
+		}
+#else
 		if (meta.type == SHM_TYPE_SYSTEMV) {
 			return detachShmSegment(meta, force, onExit);
 		} else if (meta.type == SHM_TYPE_POSIX) {
 			return detachPosixShmObject(meta, force, onExit);
 		}
+#endif
 		return -1;
 	}
 
@@ -364,6 +376,47 @@ namespace node_shm {
 		return -1;
 	}
 
+#ifdef _WIN32
+	// Detach Windows shared memory object
+	// Returns 0 if deleted, 1 if detached, -1 if not exists
+	static int detachWindowsShmObject(ShmMeta& meta, bool force, bool onExit) {
+		bool attached = meta.memAddr != NULL;
+		
+		// Unmap the view
+		if (attached) {
+			if (!UnmapViewOfFile(meta.memAddr)) {
+				if (!onExit) {
+					Nan::ThrowError("Failed to unmap view of file");
+				}
+				return -1;
+			}
+			shmMappedBytes -= meta.memSize;
+			meta.memAddr = NULL;
+		}
+		
+		// Close the handle
+		if (meta.hMapFile != NULL && meta.hMapFile != INVALID_HANDLE_VALUE) {
+			CloseHandle(meta.hMapFile);
+			meta.hMapFile = NULL;
+		}
+		
+		if (meta.name.empty()) {
+			// meta is obsolete, should be deleted from meta array
+			return 0;
+		}
+		
+		if (force || meta.isOwner) {
+			shmAllocatedBytes -= meta.memSize;
+			meta.memSize = 0;
+			meta.name.clear();
+			meta.type = SHM_DELETED;
+			return 0; // destroyed
+		} else {
+			return 1; // detached but not destroyed
+		}
+	}
+#endif
+
 	// Used only when creating byte-array (Buffer), not typed array
 	// Because impl of CallbackInfo::New() is not public (see https://github.com/nodejs/node/blob/v6.x/src/node_buffer.cc)
 	// Developer can detach shared memory segments manually by shm.detach()
@@ -380,6 +433,130 @@ namespace node_shm {
 
 	NAN_METHOD(get) {
 		Nan::HandleScope scope;
+#ifdef _WIN32
+		// On Windows, convert integer key to string name
+		key_t key = Nan::To<uint32_t>(info[0]).FromJust();
+		size_t count = Nan::To<uint32_t>(info[1]).FromJust();
+		int shmflg = Nan::To<uint32_t>(info[2]).FromJust();
+		int at_shmflg = Nan::To<uint32_t>(info[3]).FromJust();
+		ShmBufferType type = (ShmBufferType) Nan::To<int32_t>(info[4]).FromJust();
+		size_t size = count * getSizeForShmBufferType(type);
+		bool isCreate = (size > 0);
+		
+		// Convert integer key to Windows object name
+		std::string name = "Local\\shmkey_" + std::to_string(key);
+		std::wstring wideName(name.begin(), name.end());
+		
+		HANDLE hMapFile = NULL;
+		void* addr = NULL;
+		size_t realSize = isCreate ? size + sizeof(size_t) : 0;
+		bool created = false;
+		
+		if (isCreate) {
+			// Try to create new mapping
+			DWORD dwMaxSizeHigh = (DWORD)((realSize >> 32) & 0xFFFFFFFF);
+			DWORD dwMaxSizeLow = (DWORD)(realSize & 0xFFFFFFFF);
+			
+			hMapFile = CreateFileMappingW(
+				INVALID_HANDLE_VALUE,
+				NULL,
+				PAGE_READWRITE,
+				dwMaxSizeHigh,
+				dwMaxSizeLow,
+				wideName.c_str()
+			);
+			
+			if (hMapFile == NULL) {
+				return Nan::ThrowError("Failed to create file mapping");
+			}
+			
+			// Check if it already existed
+			if (GetLastError() == ERROR_ALREADY_EXISTS) {
+				if (shmflg & IPC_EXCL) {
+					CloseHandle(hMapFile);
+					info.GetReturnValue().SetNull();
+					return;
+				}
+				created = false;
+			} else {
+				created = true;
+			}
+		} else {
+			// Open existing mapping
+			hMapFile = OpenFileMappingW(
+				FILE_MAP_ALL_ACCESS,
+				FALSE,
+				wideName.c_str()
+			);
+			
+			if (hMapFile == NULL) {
+				info.GetReturnValue().SetNull();
+				return;
+			}
+		}
+		
+		// Map view of file
+		addr = MapViewOfFile(
+			hMapFile,
+			FILE_MAP_ALL_ACCESS,
+			0,
+			0,
+			realSize ? realSize : 0
+		);
+		
+		if (addr == NULL) {
+			CloseHandle(hMapFile);
+			return Nan::ThrowError("Failed to map view of file");
+		}
+		
+		// Read/write actual buffer size at start of shared memory
+		size_t* sizePtr = (size_t*)addr;
+		char* buf = (char*)addr;
+		buf += sizeof(size_t);
+		
+		if (created) {
+			*sizePtr = size;
+		} else {
+			if (isCreate) {
+				realSize = *sizePtr + sizeof(size_t);
+			} else {
+				size = *sizePtr;
+				count = size / getSizeForShmBufferType(type);
+			}
+		}
+		
+		// Write meta
+		ShmMeta meta = {
+			.type=SHM_TYPE_WINDOWS,
+			.id=NO_SHMID,
+			.memAddr=addr,
+			.memSize=realSize ? realSize : (size + sizeof(size_t)),
+			.name=name,
+			.isOwner=created,
+			.hMapFile=hMapFile
+		};
+		
+		size_t metaInd = findShmSegmentInfo(meta);
+		if (metaInd == NOT_FOUND_IND) {
+			metaInd = addShmSegmentInfo(meta);
+		}
+		
+		if (created) {
+			shmAllocatedBytes += meta.memSize;
+			shmMappedBytes += meta.memSize;
+		} else {
+			shmMappedBytes += meta.memSize;
+		}
+		
+		info.GetReturnValue().Set(Nan::NewTypedBuffer(
+			buf,
+			count,
+			FreeCallback,
+			reinterpret_cast<void*>(static_cast<intptr_t>(metaInd)),
+			type
+		).ToLocalChecked());
+#else
+		// Unix/Linux System V implementation
 		int err;
 		struct shmid_ds shminf;
 		key_t key = Nan::To<uint32_t>(info[0]).FromJust();
@@ -441,6 +618,7 @@ namespace node_shm {
 				type
 			).ToLocalChecked());
 		}
+#endif
 	}
 
 	NAN_METHOD(getPosix) {
@@ -451,6 +629,128 @@ namespace node_shm {
 		std::string name = (*Nan::Utf8String(info[0]));
 		size_t count = Nan::To<uint32_t>(info[1]).FromJust();
 		int oflag = Nan::To<uint32_t>(info[2]).FromJust();
+#ifdef _WIN32
+		// Windows implementation - ignore mode and mmap_flags
+		ShmBufferType type = (ShmBufferType) Nan::To<int32_t>(info[5]).FromJust();
+		size_t size = count * getSizeForShmBufferType(type);
+		bool isCreate = (size > 0);
+		size_t realSize = isCreate ? size + sizeof(size_t) : 0;
+		
+		// Convert name to Windows format (replace / with _)
+		std::string winName = "Local\\shm" + name;
+		std::replace(winName.begin(), winName.end(), '/', '_');
+		std::wstring wideName(winName.begin(), winName.end());
+		
+		HANDLE hMapFile = NULL;
+		void* addr = NULL;
+		bool created = false;
+		
+		if (isCreate) {
+			// Try to create new mapping
+			DWORD dwMaxSizeHigh = (DWORD)((realSize >> 32) & 0xFFFFFFFF);
+			DWORD dwMaxSizeLow = (DWORD)(realSize & 0xFFFFFFFF);
+			
+			hMapFile = CreateFileMappingW(
+				INVALID_HANDLE_VALUE,
+				NULL,
+				PAGE_READWRITE,
+				dwMaxSizeHigh,
+				dwMaxSizeLow,
+				wideName.c_str()
+			);
+			
+			if (hMapFile == NULL) {
+				return Nan::ThrowError("Failed to create file mapping");
+			}
+			
+			// Check if it already existed
+			if (GetLastError() == ERROR_ALREADY_EXISTS) {
+				if (oflag & O_EXCL) {
+					CloseHandle(hMapFile);
+					info.GetReturnValue().SetNull();
+					return;
+				}
+				created = false;
+			} else {
+				created = true;
+			}
+		} else {
+			// Open existing mapping
+			hMapFile = OpenFileMappingW(
+				FILE_MAP_ALL_ACCESS,
+				FALSE,
+				wideName.c_str()
+			);
+			
+			if (hMapFile == NULL) {
+				info.GetReturnValue().SetNull();
+				return;
+			}
+		}
+		
+		// Map view of file
+		addr = MapViewOfFile(
+			hMapFile,
+			FILE_MAP_ALL_ACCESS,
+			0,
+			0,
+			realSize ? realSize : 0
+		);
+		
+		if (addr == NULL) {
+			CloseHandle(hMapFile);
+			return Nan::ThrowError("Failed to map view of file");
+		}
+		
+		// Read/write actual buffer size at start of shared memory
+		size_t* sizePtr = (size_t*)addr;
+		char* buf = (char*)addr;
+		buf += sizeof(size_t);
+		
+		if (created) {
+			*sizePtr = size;
+		} else {
+			if (isCreate) {
+				realSize = *sizePtr + sizeof(size_t);
+			} else {
+				size = *sizePtr;
+				count = size / getSizeForShmBufferType(type);
+			}
+		}
+		
+		// Write meta
+		ShmMeta meta = {
+			.type=SHM_TYPE_WINDOWS,
+			.id=NO_SHMID,
+			.memAddr=addr,
+			.memSize=realSize ? realSize : (size + sizeof(size_t)),
+			.name=name,
+			.isOwner=created,
+			.hMapFile=hMapFile
+		};
+		
+		size_t metaInd = findShmSegmentInfo(meta);
+		if (metaInd == NOT_FOUND_IND) {
+			metaInd = addShmSegmentInfo(meta);
+		}
+		
+		if (created) {
+			shmAllocatedBytes += meta.memSize;
+			shmMappedBytes += meta.memSize;
+		} else {
+			shmMappedBytes += meta.memSize;
+		}
+		
+		// Build and return buffer
+		info.GetReturnValue().Set(Nan::NewTypedBuffer(
+			buf,
+			count,
+			FreeCallback,
+			reinterpret_cast<void*>(static_cast<intptr_t>(metaInd)),
+			type
+		).ToLocalChecked());
+#else
+		// Unix/Linux POSIX implementation
 		mode_t mode = Nan::To<uint32_t>(info[3]).FromJust();
 		int mmap_flags = Nan::To<uint32_t>(info[4]).FromJust();
 		ShmBufferType type = (ShmBufferType) Nan::To<int32_t>(info[5]).FromJust();
@@ -556,6 +856,7 @@ namespace node_shm {
 			reinterpret_cast<void*>(static_cast<intptr_t>(metaInd)),
 			type
 		).ToLocalChecked());
+#endif
 	}
 
 	NAN_METHOD(detach) {

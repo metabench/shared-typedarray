@@ -56,6 +56,26 @@ enum ShmBufferType {
 	SHMBT_FLOAT64
 };
 
+#ifdef _WIN32
+// Windows-specific constants (emulate Unix values)
+#define IPC_PRIVATE 0
+#define IPC_CREAT 01000
+#define IPC_EXCL 02000
+#define SHM_RDONLY 010000
+
+#define O_CREAT 0100
+#define O_EXCL 0200
+#define O_RDWR 02
+#define O_RDONLY 00
+#define O_TRUNC 01000
+
+#define MAP_SHARED 0x01
+#define MAP_PRIVATE 0x02
+#define MAP_ANON 0x20
+#define MAP_ANONYMOUS 0x20
+#define MAP_NORESERVE 0x4000
+#endif
+
 inline int getSizeForShmBufferType(ShmBufferType type) {
 	size_t size1 = 0;
 	switch(type) {

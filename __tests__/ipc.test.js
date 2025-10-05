@@ -1,22 +1,15 @@
 const cluster = require('cluster');
 const os = require('os');
 
-// Check if we're on a supported platform
-const isWindows = os.platform() === 'win32';
-const isSupported = !isWindows;
-
 let shm;
-if (isSupported) {
-  try {
-    shm = require('../index.js');
-  } catch (err) {
-    shm = null;
-  }
+try {
+  shm = require('../index.js');
+} catch (err) {
+  shm = null;
 }
 
 describe('Shared TypedArray - IPC Tests', () => {
-  const skipOnUnsupported = isSupported ? it : it.skip;
-  const skipOnWindows = !isWindows ? it : it.skip;
+  const skipIfNoShm = shm ? it : it.skip;
 
   beforeEach(() => {
     if (shm) {
@@ -38,7 +31,7 @@ describe('Shared TypedArray - IPC Tests', () => {
     }
   });
 
-  skipOnWindows('should share data between processes using System V', (done) => {
+  skipIfNoShm('should share data between processes using System V', (done) => {
     if (!cluster.isMaster) {
       return;
     }
@@ -74,7 +67,7 @@ describe('Shared TypedArray - IPC Tests', () => {
     }, 5000);
   }, 10000);
 
-  skipOnWindows('should share data between processes using POSIX', (done) => {
+  skipIfNoShm('should share data between processes using POSIX', (done) => {
     if (!cluster.isMaster) {
       return;
     }
@@ -112,7 +105,7 @@ describe('Shared TypedArray - IPC Tests', () => {
 });
 
 // Worker process code
-if (cluster.isWorker && isSupported && shm) {
+if (cluster.isWorker && shm) {
   process.on('message', (msg) => {
     if (msg.type === 'test') {
       try {

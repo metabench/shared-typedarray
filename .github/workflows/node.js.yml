@@ -58,15 +58,15 @@ jobs:
     
     - name: Install dependencies
       run: npm ci
-      continue-on-error: true
     
-    - name: Try to build native module
+    - name: Build native module
       run: npm run build
-      continue-on-error: true
     
-    - name: Run tests (expected to skip on Windows)
+    - name: Run tests
       run: npm test
-      continue-on-error: true
+    
+    - name: Run example test
+      run: npm run test:example
 
   lint:
     name: Lint

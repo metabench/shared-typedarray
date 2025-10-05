@@ -1,24 +1,20 @@
 const cluster = require('cluster');
 const os = require('os');
 
-// Check if we're on a supported platform
+// Check platform
 const isWindows = os.platform() === 'win32';
-const isSupported = !isWindows;
 
-// Only require shm on supported platforms
+// Load shm on all platforms now
 let shm;
-if (isSupported) {
-  try {
-    shm = require('../index.js');
-  } catch (err) {
-    console.error('Failed to load shared-typedarray module:', err.message);
-    isSupported && (shm = null);
-  }
+try {
+  shm = require('../index.js');
+} catch (err) {
+  console.error('Failed to load shared-typedarray module:', err.message);
+  shm = null;
 }
 
 describe('Shared TypedArray', () => {
-  const skipOnUnsupported = isSupported ? it : it.skip;
-  const skipOnWindows = !isWindows ? it : it.skip;
+  const skipIfNoShm = shm ? it : it.skip;
   
   // Generate unique keys for each test to avoid collisions
   let testCounter = 0;
@@ -34,15 +30,8 @@ describe('Shared TypedArray', () => {
   };
 
   beforeAll(() => {
-    if (!isSupported) {
-      console.warn('Skipping tests on unsupported platform:', os.platform());
-    }
-    if (shm) {
-      try {
-        shm.detachAll();
-      } catch (e) {
-        // Ignore
-      }
+    if (!shm) {
+      console.warn('Skipping tests - module failed to load');
     }
   });
 
@@ -61,7 +50,7 @@ describe('Shared TypedArray', () => {
       expect(['linux', 'darwin', 'freebsd', 'win32']).toContain(os.platform());
     });
 
-    skipOnUnsupported('should load the module on supported platforms', () => {
+    skipIfNoShm('should load the module on supported platforms', () => {
       expect(shm).toBeDefined();
       expect(typeof shm.create).toBe('function');
       expect(typeof shm.get).toBe('function');
@@ -70,7 +59,7 @@ describe('Shared TypedArray', () => {
   });
 
   describe('Module API', () => {
-    skipOnUnsupported('should export required functions', () => {
+    skipIfNoShm('should export required functions', () => {
       expect(shm).toHaveProperty('create');
       expect(shm).toHaveProperty('get');
       expect(shm).toHaveProperty('detach');
@@ -82,7 +71,7 @@ describe('Shared TypedArray', () => {
       expect(shm).toHaveProperty('LengthMax');
     });
 
-    skipOnUnsupported('should export BufferType constants', () => {
+    skipIfNoShm('should export BufferType constants', () => {
       expect(shm.BufferType).toHaveProperty('Buffer');
       expect(shm.BufferType).toHaveProperty('Int8Array');
       expect(shm.BufferType).toHaveProperty('Uint8Array');
@@ -92,7 +81,7 @@ describe('Shared TypedArray', () => {
   });
 
   describe('System V Shared Memory (SysV)', () => {
-    skipOnWindows('should create a shared memory segment with auto key', () => {
+    skipIfNoShm('should create a shared memory segment with auto key', () => {
       const buf = shm.create(1024, 'Buffer');
       expect(buf).not.toBeNull();
       expect(buf).toBeInstanceOf(Buffer);
@@ -102,7 +91,7 @@ describe('Shared TypedArray', () => {
       shm.detach(buf.key);
     });
 
-    skipOnWindows('should create a shared memory segment with specific key', () => {
+    skipIfNoShm('should create a shared memory segment with specific key', () => {
       const key = getUniqueKey();
       const buf = shm.create(1024, 'Buffer', key);
       expect(buf).not.toBeNull();
@@ -111,7 +100,7 @@ describe('Shared TypedArray', () => {
       shm.detach(key);
     });
 
-    skipOnWindows('should fail to create segment with duplicate key', () => {
+    skipIfNoShm('should fail to create segment with duplicate key', () => {
       const key = getUniqueKey();
       const buf1 = shm.create(1024, 'Buffer', key);
       const buf2 = shm.create(1024, 'Buffer', key);
@@ -120,7 +109,7 @@ describe('Shared TypedArray', () => {
       shm.detach(key);
     });
 
-    skipOnWindows('should get existing shared memory segment', () => {
+    skipIfNoShm('should get existing shared memory segment', () => {
       const key = getUniqueKey();
       const buf1 = shm.create(1024, 'Buffer', key);
       const buf2 = shm.get(key, 'Buffer');
@@ -130,12 +119,12 @@ describe('Shared TypedArray', () => {
       shm.detach(key);
     });
 
-    skipOnWindows('should return null for non-existent key', () => {
+    skipIfNoShm('should return null for non-existent key', () => {
       const buf = shm.get(99999999, 'Buffer');
       expect(buf).toBeNull();
     });
 
-    skipOnWindows('should write and read data', () => {
+    skipIfNoShm('should write and read data', () => {
       const key = getUniqueKey();
       const buf = shm.create(10, 'Buffer', key);
       expect(buf).not.toBeNull();
@@ -149,7 +138,7 @@ describe('Shared TypedArray', () => {
       shm.detach(key);
     });
 
-    skipOnWindows('should track memory usage', () => {
+    skipIfNoShm('should track memory usage', () => {
       // Clear all first and wait a moment for cleanup
       shm.detachAll();
       
@@ -174,7 +163,7 @@ describe('Shared TypedArray', () => {
   });
 
   describe('POSIX Shared Memory', () => {
-    skipOnWindows('should create POSIX shared memory object', () => {
+    skipIfNoShm('should create POSIX shared memory object', () => {
       const name = getUniqueName();
       const buf = shm.create(1024, 'Buffer', name);
       expect(buf).not.toBeNull();
@@ -184,7 +173,7 @@ describe('Shared TypedArray', () => {
       shm.destroy(name);
     });
 
-    skipOnWindows('should fail to create duplicate POSIX object', () => {
+    skipIfNoShm('should fail to create duplicate POSIX object', () => {
       const name = getUniqueName();
       const buf1 = shm.create(1024, 'Buffer', name);
       const buf2 = shm.create(1024, 'Buffer', name);
@@ -193,7 +182,7 @@ describe('Shared TypedArray', () => {
       shm.destroy(name);
     });
 
-    skipOnWindows('should get existing POSIX shared memory', () => {
+    skipIfNoShm('should get existing POSIX shared memory', () => {
       const name = getUniqueName();
       const buf1 = shm.create(1024, 'Buffer', name);
       const buf2 = shm.get(name, 'Buffer');
@@ -203,7 +192,7 @@ describe('Shared TypedArray', () => {
       shm.destroy(name);
     });
 
-    skipOnWindows('should write and read POSIX shared data', () => {
+    skipIfNoShm('should write and read POSIX shared data', () => {
       const name = getUniqueName();
       const buf = shm.create(10, 'Buffer', name);
       buf[0] = 123;
@@ -216,7 +205,7 @@ describe('Shared TypedArray', () => {
       shm.destroy(name);
     });
 
-    skipOnWindows('should properly destroy POSIX objects', () => {
+    skipIfNoShm('should properly destroy POSIX objects', () => {
       const name = getUniqueName();
       const buf = shm.create(1024, 'Buffer', name);
       expect(buf).not.toBeNull();
@@ -230,7 +219,7 @@ describe('Shared TypedArray', () => {
   });
 
   describe('TypedArray Support', () => {
-    skipOnWindows('should create Int8Array', () => {
+    skipIfNoShm('should create Int8Array', () => {
       const arr = shm.create(100, 'Int8Array');
       expect(arr).not.toBeNull();
       expect(arr.constructor.name).toBe('Int8Array');
@@ -238,14 +227,14 @@ describe('Shared TypedArray', () => {
       shm.detach(arr.key);
     });
 
-    skipOnWindows('should create Uint8Array', () => {
+    skipIfNoShm('should create Uint8Array', () => {
       const arr = shm.create(100, 'Uint8Array');
       expect(arr).toBeInstanceOf(Uint8Array);
       expect(arr.length).toBe(100);
       shm.detach(arr.key);
     });
 
-    skipOnWindows('should create Float32Array', () => {
+    skipIfNoShm('should create Float32Array', () => {
       const arr = shm.create(100, 'Float32Array');
       expect(arr).not.toBeNull();
       expect(arr.constructor.name).toBe('Float32Array');
@@ -253,7 +242,7 @@ describe('Shared TypedArray', () => {
       shm.detach(arr.key);
     });
 
-    skipOnWindows('should create Float64Array', () => {
+    skipIfNoShm('should create Float64Array', () => {
       const arr = shm.create(100, 'Float64Array');
       expect(arr).not.toBeNull();
       expect(arr.constructor.name).toBe('Float64Array');
@@ -261,7 +250,7 @@ describe('Shared TypedArray', () => {
       shm.detach(arr.key);
     });
 
-    skipOnWindows('should create Int16Array', () => {
+    skipIfNoShm('should create Int16Array', () => {
       const arr = shm.create(100, 'Int16Array');
       expect(arr).not.toBeNull();
       expect(arr.constructor.name).toBe('Int16Array');
@@ -269,7 +258,7 @@ describe('Shared TypedArray', () => {
       shm.detach(arr.key);
     });
 
-    skipOnWindows('should create Uint16Array', () => {
+    skipIfNoShm('should create Uint16Array', () => {
       const arr = shm.create(100, 'Uint16Array');
       expect(arr).not.toBeNull();
       expect(arr.constructor.name).toBe('Uint16Array');
@@ -277,7 +266,7 @@ describe('Shared TypedArray', () => {
       shm.detach(arr.key);
     });
 
-    skipOnWindows('should create Int32Array', () => {
+    skipIfNoShm('should create Int32Array', () => {
       const arr = shm.create(100, 'Int32Array');
       expect(arr).not.toBeNull();
       expect(arr.constructor.name).toBe('Int32Array');
@@ -285,7 +274,7 @@ describe('Shared TypedArray', () => {
       shm.detach(arr.key);
     });
 
-    skipOnWindows('should create Uint32Array', () => {
+    skipIfNoShm('should create Uint32Array', () => {
       const arr = shm.create(100, 'Uint32Array');
       expect(arr).not.toBeNull();
       expect(arr.constructor.name).toBe('Uint32Array');
@@ -293,7 +282,7 @@ describe('Shared TypedArray', () => {
       shm.detach(arr.key);
     });
 
-    skipOnWindows('should handle Float32Array math correctly', () => {
+    skipIfNoShm('should handle Float32Array math correctly', () => {
       const arr = shm.create(10, 'Float32Array');
       arr[0] = 3.14159;
       arr[1] = 2.71828;
@@ -304,7 +293,7 @@ describe('Shared TypedArray', () => {
       shm.detach(arr.key);
     });
 
-    skipOnWindows('should handle typed array byte calculations', () => {
+    skipIfNoShm('should handle typed array byte calculations', () => {
       const arr32 = shm.create(100, 'Float32Array');
       expect(arr32.byteLength).toBe(100 * 4);
       shm.detach(arr32.key);
@@ -316,25 +305,25 @@ describe('Shared TypedArray', () => {
   });
 
   describe('Error Handling', () => {
-    skipOnWindows('should throw error for invalid type key', () => {
+    skipIfNoShm('should throw error for invalid type key', () => {
       expect(() => {
         shm.create(100, 'InvalidType');
       }).toThrow();
     });
 
-    skipOnWindows('should throw error for invalid count', () => {
+    skipIfNoShm('should throw error for invalid count', () => {
       expect(() => {
         shm.create(-1, 'Buffer');
       }).toThrow();
     });
 
-    skipOnWindows('should throw error for zero count', () => {
+    skipIfNoShm('should throw error for zero count', () => {
       expect(() => {
         shm.create(0, 'Buffer');
       }).toThrow();
     });
 
-    skipOnWindows('should throw error for invalid key range', () => {
+    skipIfNoShm('should throw error for invalid key range', () => {
       expect(() => {
         shm.create(100, 'Buffer', 0);
       }).toThrow();
@@ -342,7 +331,7 @@ describe('Shared TypedArray', () => {
   });
 
   describe('Cleanup', () => {
-    skipOnWindows('should detach all shared memory', () => {
+    skipIfNoShm('should detach all shared memory', () => {
       // Clean everything first
       shm.detachAll();
       
